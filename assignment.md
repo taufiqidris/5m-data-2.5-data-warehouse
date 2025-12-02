@@ -27,6 +27,64 @@ Answer:
 Paste the `dim_station.sql` model here:
 
 ```sql
+{{ config(materialized='table') }}
+
+WITH station_base AS (
+    SELECT
+        station_id,
+        name AS station_name,
+        status,
+        address,
+        number_of_docks,
+        council_district
+    FROM {{ source('austin_bikeshare', 'bikeshare_stations') }}
+),
+
+trip_starts AS (
+    -- Clean + cast start_station_id once, then aggregate
+    SELECT
+        station_id,
+        SUM(duration_minutes * 60) AS total_duration,
+        COUNT(*) AS total_starts
+    FROM (
+        SELECT
+            SAFE_CAST(start_station_id AS INT64) AS station_id,
+            duration_minutes
+        FROM {{ source('austin_bikeshare', 'bikeshare_trips') }}
+        WHERE start_station_id IS NOT NULL
+    )
+    WHERE station_id IS NOT NULL
+    GROUP BY station_id
+),
+
+trip_ends AS (
+    -- Clean + cast end_station_id once, then aggregate
+    SELECT
+        station_id,
+        COUNT(*) AS total_ends
+    FROM (
+        SELECT
+            SAFE_CAST(end_station_id AS INT64) AS station_id
+        FROM {{ source('austin_bikeshare', 'bikeshare_trips') }}
+        WHERE end_station_id IS NOT NULL
+    )
+    WHERE station_id IS NOT NULL
+    GROUP BY station_id
+)
+
+SELECT
+    sb.station_id,
+    sb.station_name,
+    sb.status,
+    sb.address,
+    sb.number_of_docks,
+    sb.council_district,
+    COALESCE(ts.total_duration, 0) AS total_duration,
+    COALESCE(ts.total_starts, 0)   AS total_starts,
+    COALESCE(te.total_ends, 0)     AS total_ends
+FROM station_base sb
+LEFT JOIN trip_starts ts USING (station_id)
+LEFT JOIN trip_ends  te USING (station_id);
 
 ```
 
